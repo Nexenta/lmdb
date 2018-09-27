@@ -912,6 +912,14 @@ int  mdb_env_set_maxdbs(MDB_env *env, MDB_dbi dbs);
 	 */
 int  mdb_env_get_maxkeysize(MDB_env *env);
 
+	/** @brief Set DB page size
+	 *
+	 * @param[in] env An environment handle returned by #mdb_env_create()
+	 * @param[in] psize power of two value in range 4096...32768
+	 * @return A non-zero error value on failure and 0 on success.
+	 */
+int  mdb_env_set_psize(MDB_env *env, int psize);
+
 	/** @brief Set application information associated with the #MDB_env.
 	 *
 	 * @param[in] env An environment handle returned by #mdb_env_create()

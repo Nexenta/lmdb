@@ -4101,6 +4101,15 @@ mdb_env_set_mapsize(MDB_env *env, size_t size)
 }
 
 int ESECT
+mdb_env_set_psize(MDB_env *env, int psize)
+{
+	if (env->me_map)
+		return EINVAL;
+	env->me_psize = psize;
+	return MDB_SUCCESS;
+}
+
+int ESECT
 mdb_env_set_maxdbs(MDB_env *env, MDB_dbi dbs)
 {
 	if (env->me_map)
@@ -4410,9 +4419,11 @@ mdb_env_open2(MDB_env *env)
 			return i;
 		DPUTS("new mdbenv");
 		newenv = 1;
-		env->me_psize = env->me_os_psize;
-		if (env->me_psize > MAX_PAGESIZE)
-			env->me_psize = MAX_PAGESIZE;
+		if (!env->me_psize) {
+			env->me_psize = env->me_os_psize;
+			if (env->me_psize > MAX_PAGESIZE)
+				env->me_psize = MAX_PAGESIZE;
+		}
 		memset(&meta, 0, sizeof(meta));
 		mdb_env_init_meta0(env, &meta);
 		meta.mm_mapsize = DEFAULT_MAPSIZE;
