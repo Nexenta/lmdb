@@ -4017,6 +4017,7 @@ mdb_env_map(MDB_env *env, void *addr)
 		env->me_map = NULL;
 		return ErrCode();
 	}
+	madvise(env->me_map, env->me_mapsize, MADV_DONTDUMP);
 
 	if (flags & MDB_NORDAHEAD) {
 		/* Turn off readahead. It's harmful when the DB is larger than RAM. */
