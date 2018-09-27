@@ -15,11 +15,21 @@
 #include <stdlib.h>
 #include <time.h>
 #include "lmdb.h"
+#include "midl.h"
 
 #define E(expr) CHECK((rc = (expr)) == MDB_SUCCESS, #expr)
 #define RES(err, expr) ((rc = expr) == (err) || (CHECK(!rc, #expr), 0))
 #define CHECK(test, msg) ((test) ? (void)0 : ((void)fprintf(stderr, \
 	"%s:%d: %s: %s\n", __FILE__, __LINE__, msg, mdb_strerror(rc)), abort()))
+
+static inline uint64_t
+get_realtime_ns() {
+	struct timespec tp;
+
+	(void)clock_gettime(CLOCK_REALTIME, &tp);
+	return ((tp.tv_sec * 1000000000) + tp.tv_nsec);
+}
+
 
 int main(int argc,char * argv[])
 {
@@ -36,6 +46,38 @@ int main(int argc,char * argv[])
 	char sval[32] = "";
 
 	srand(time(NULL));
+
+	/* mdb_midl_range_lookup test */
+	size_t gap_step = 128*1024;
+	size_t idl_size = 1024*1024;
+	size_t pgno = 100000000;
+	size_t gap_at = rand() % gap_step;
+	MDB_IDL idl = mdb_midl_alloc(idl_size);
+	for (size_t i = 1; i <= idl_size; i++) {
+		mdb_midl_append(&idl, pgno--);
+		if (i == gap_at) {
+			pgno-=2;
+			size_t next = abs(rand()) % gap_step;
+			if (!next)
+				next++;
+			gap_at += next;
+			printf("Added gap at %lu\n", i+1);
+		}
+	}
+	uint64_t ranges[] = {gap_step/2, gap_step*2/3, gap_step };
+	for (size_t n = 0; n < sizeof(ranges)/sizeof(ranges[0]); n++) {
+		uint64_t now = get_realtime_ns();
+		size_t r1 = mdb_midl_range_lookup(idl, ranges[n]);
+		uint64_t ts1 = get_realtime_ns() - now;
+		now = get_realtime_ns();
+		size_t r2 = mdb_midl_range_lookup_linear(idl, ranges[n]);
+		uint64_t ts2 = get_realtime_ns() - now;
+		CHECK(r1 == r2, "Results of linear and binary search doesn't match\n");
+		printf("Range %lu: fast lookup %lu nS, linear lookup %lu nS, value index %lu\n",
+			ranges[n], ts1, ts2, r2);
+	}
+
+	mdb_midl_free(idl);
 
 	    count = (rand()%384) + 64;
 	    values = (int *)malloc(count*sizeof(int));

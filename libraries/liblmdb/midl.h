@@ -178,6 +178,25 @@ int mdb_mid2l_insert( MDB_ID2L ids, MDB_ID2 *id );
 	 */
 int mdb_mid2l_append( MDB_ID2L ids, MDB_ID2 *id );
 
+/** Lookup for a continuous region in an IDL using binary search
+ *
+ * @param[in] idl	The IDL to lookup in.
+ * @param[in] range	Region size
+ * @return	index of the first regio entry or 0 if not found.
+ */
+unsigned
+mdb_midl_range_lookup( MDB_IDL idl, unsigned range);
+
+/** Lookup for a continuous region in an IDL using linear search
+ *
+ * @param[in] idl	The IDL to lookup in.
+ * @param[in] range	Region size
+ * @return	index of the first regio entry or 0 if not found.
+ */
+unsigned
+mdb_midl_range_lookup_linear( MDB_IDL ids, unsigned range);
+
+
 /** @} */
 /** @} */
 #ifdef __cplusplus

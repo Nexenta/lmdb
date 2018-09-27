@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <assert.h>
 #include <sys/types.h>
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -362,6 +363,58 @@ int mdb_mid2l_append( MDB_ID2L ids, MDB_ID2 *id )
 	ids[ids[0].mid] = *id;
 	return 0;
 }
+
+unsigned
+mdb_midl_range_lookup_linear( MDB_IDL idl, unsigned range)
+{
+	unsigned i = idl[0];
+	unsigned pgno = 0;
+	do {
+		pgno = idl[i];
+		if (idl[i-range+1] == pgno+range-1)
+			break;
+	} while (--i > range-1);
+	return i >= range ? i : 0;
+}
+
+unsigned
+mdb_midl_range_lookup( MDB_IDL idl, unsigned range)
+{
+	unsigned cur = idl[0];
+	unsigned n2 = range - 1;
+	unsigned min = 0, max = 0;
+	unsigned rc = 0;
+
+	if (cur <= 64 || range <= 4)
+		return mdb_midl_range_lookup_linear(idl, range);
+
+	do {
+		if (range > cur)
+			break;
+
+		if (idl[cur-n2] - idl[cur] == n2) {
+			rc = cur;
+			break;
+		}
+
+		min = cur - n2;
+		max = cur - n2/2;
+		while (min + 1 < max || idl[min] - idl[max] == max - min) {
+			unsigned d = (max - min) / 2;
+			if (idl[min] - idl[max] != max - min)
+				max -= d;
+			else {
+				unsigned tmp = max;
+				max += d > 0 ? d : 1;
+				min = tmp;
+			}
+		}
+		cur = min;
+	} while(1);
+
+	return rc;
+}
+
 
 /** @} */
 /** @} */

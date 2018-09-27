@@ -2333,12 +2333,11 @@ mdb_page_alloc(MDB_cursor *mc, int num, MDB_page **mp, int flags)
 			if (likely(flags & MDBX_ALLOC_CACHE)
 					&& mop_len > n2
 					&& ( !(flags & MDB_COALESCE) || op == MDB_FIRST)) {
-				i = mop_len;
-				do {
+				i = mdb_midl_range_lookup(mop, num);
+				if (i) {
 					pgno = mop[i];
-					if (likely(mop[i-n2] == pgno+n2))
-						goto done;
-				} while (--i > n2);
+					goto done;
+				}
 			}
 
 			if (op == MDB_FIRST) {	/* 1st iteration */
@@ -2484,12 +2483,11 @@ mdb_page_alloc(MDB_cursor *mc, int num, MDB_page **mp, int flags)
 
 		if ((flags & (MDB_COALESCE|MDBX_ALLOC_CACHE)) == (MDB_COALESCE|MDBX_ALLOC_CACHE)
 				&& mop_len > n2) {
-			i = mop_len;
-			do {
+			i = mdb_midl_range_lookup(mop, num);
+			if (i) {
 				pgno = mop[i];
-				if (mop[i-n2] == pgno+n2)
-					goto done;
-			} while (--i > n2);
+				goto done;
+			}
 		}
 
 		/* Use new pages from the map when nothing suitable in the freeDB */
