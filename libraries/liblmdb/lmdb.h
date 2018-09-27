@@ -308,6 +308,10 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_RAW		0x2000000
 	/** use o_direct flag to open file/partition */
 #define MDB_DIRECT	0x4000000
+	/** aim to coalesce FreeDB records */
+#define MDB_COALESCE	0x8000000
+	/** LIFO policy for reclaiming FreeDB records */
+#define MDB_LIFORECLAIM	0x10000000
 /** @} */
 
 /**	@defgroup	mdb_dbi_open	Database Flags
@@ -622,6 +626,12 @@ int  mdb_env_create(MDB_env **env);
 	 *		caller is expected to overwrite all of the memory that was
 	 *		reserved in that case.
 	 *		This flag may be changed at any time using #mdb_env_set_flags().
+	 *  <li>#MDB_COALESCE
+	 *		Aim to coalesce records while reclaiming FreeDB.
+	 *		This flag may be changed at any time using #mdb_env_set_flags().
+	 *  <li>#MDB_LIFORECLAIM
+	 *		LIFO policy for reclaiming FreeDB records. This significantly reduce
+	 *		write IPOS in case MDB_NOSYNC with periodically checkpoints.
 	 * </ul>
 	 * @param[in] mode The UNIX permissions to set on created files and semaphores.
 	 * This parameter is ignored on Windows.
@@ -1787,6 +1797,51 @@ int	mdb_reader_list(MDB_env *env, MDB_msg_func *func, void *ctx);
 	 * @return 0 on success, non-zero on failure.
 	 */
 int	mdb_reader_check(MDB_env *env, int *dead);
+
+	/** @brief Returns a lag of the reading.
+	 *
+	 * Returns an information for estimate how much given read-only
+	 * transaction is lagging relative the to actual head.
+	 *
+	 * @param[in] txn A transaction handle returned by #mdb_txn_begin()
+	 * @param[out] percent Percentage of page allocation in the database.
+	 * @return Number of transactions committed after the given was started for read, or -1 on failure.
+	 */
+int  mdb_txn_straggler(MDB_txn *txnm, int *percent);
+
+	/** @brief A callback function for killing a laggard readers,
+	 * called in case of MDB_MAP_FULL error.
+	 *
+	 * @param[in] env An environment handle returned by #mdb_env_create().
+	 * @param[in] pid pid of the reader process.
+	 * @param[in] thread_id thread_id of the reader thread.
+	 * @param[in] txn Transaction number on which stalled.
+	 * @return -1 on failure (reader is not killed),
+	 * 	0 on a race condition (no such reader),
+	 * 	1 on success (reader was killed),
+	 * 	>1 on success (reader was SURE killed).
+	 */
+typedef int (MDB_oom_func)(MDB_env *env, int pid, void* thread_id, size_t txn, unsigned gap, int retry);
+
+	/** @brief Set the OOM callback.
+	 *
+	 * Callback will be called only on out-of-pages case for killing
+	 * a laggard readers to allowing reclaiming of freeDB.
+	 *
+	 * @param[in] env An environment handle returned by #mdb_env_create().
+	 * @param[in] oomfunc A #MDB_oom_func function or NULL to disable.
+	 */
+void mdb_env_set_oomfunc(MDB_env *env, MDB_oom_func *oom_func);
+
+	/** @brief Get the current oom_func callback.
+	 *
+	 * Callback will be called only on out-of-pages case for killing
+	 * a laggard readers to allowing reclaiming of freeDB.
+	 *
+	 * @param[in] env An environment handle returned by #mdb_env_create().
+	 * @return A #MDB_oom_func function or NULL if disabled.
+	 */
+MDB_oom_func* mdb_env_get_oomfunc(MDB_env *env);
 /**	@} */
 
 #ifdef __cplusplus
