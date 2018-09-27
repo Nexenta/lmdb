@@ -23,9 +23,15 @@ AR	= ar
 W	= -W -Wall -Wno-unused-parameter -Wbad-function-cast -Wuninitialized
 THREADS = -pthread
 OPT = -O2 -g
+ifeq ($(USE_JEMALLOC),yes)
+CFLAGS	= $(THREADS) $(OPT) $(W) $(XCFLAGS) -DUSE_JEMALLOC -I$(NEDGE_HOME)/include
+LDLIBS	= -L$(NEDGE_HOME)/lib -ljemalloc
+SOLIBS	= -L$(NEDGE_HOME)/lib -ljemalloc
+else
 CFLAGS	= $(THREADS) $(OPT) $(W) $(XCFLAGS)
 LDLIBS	=
 SOLIBS	=
+endif
 SOEXT	= .so
 prefix	= /usr/local
 exec_prefix = $(prefix)

@@ -62,6 +62,23 @@
 # endif
 #endif
 #else
+#ifdef USE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#include <string.h>
+static inline char *je_strdup(const char *s) {
+        size_t len = 1 + strlen(s);
+        char *p = je_malloc(len);
+        return p ? strncpy(p, s, len) : NULL;
+}
+#else
+#define je_malloc malloc
+#define je_free	free
+#define je_calloc calloc
+#define je_realloc realloc
+#define je_strdup strdup
+#define je_posix_memalign posix_memalign
+#define je_memalign memalign
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #define MDB_PID_T	pid_t
@@ -1795,7 +1812,7 @@ mdb_page_malloc(MDB_txn *txn, unsigned num)
 		sz *= num;
 		off = sz - psize;
 	}
-	if ((ret = malloc(sz)) != NULL) {
+	if ((ret = je_malloc(sz)) != NULL) {
 		VGMEMP_ALLOC(env, ret, sz);
 		if (!(env->me_flags & MDB_NOMEMINIT)) {
 			memset((char *)ret + off, 0, psize);
@@ -1827,7 +1844,7 @@ mdb_dpage_free(MDB_env *env, MDB_page *dp)
 	} else {
 		/* large pages just get freed directly */
 		VGMEMP_FREE(env, dp);
-		free(dp);
+		je_free(dp);
 	}
 }
 
@@ -2557,7 +2574,7 @@ mdb_cursor_shadow(MDB_txn *src, MDB_txn *dst)
 			if (mc->mc_xcursor)
 				size += sizeof(MDB_xcursor);
 			for (; mc; mc = bk->mc_next) {
-				bk = malloc(size);
+				bk = je_malloc(size);
 				if (!bk)
 					return ENOMEM;
 				*bk = *mc;
@@ -2615,7 +2632,7 @@ mdb_cursors_close(MDB_txn *txn, unsigned merge)
 				mc = bk;
 			}
 			/* Only malloced cursors are permanently tracked. */
-			free(mc);
+			je_free(mc);
 		}
 		cursors[i] = NULL;
 	}
@@ -2860,7 +2877,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 		txn = env->me_txn0;
 		goto renew;
 	}
-	if ((txn = calloc(1, size)) == NULL) {
+	if ((txn = je_calloc(1, size)) == NULL) {
 		DPRINTF(("calloc: %s", strerror(errno)));
 		return ENOMEM;
 	}
@@ -2874,12 +2891,12 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 		unsigned int i;
 		txn->mt_cursors = (MDB_cursor **)(txn->mt_dbs + env->me_maxdbs);
 		txn->mt_dbiseqs = parent->mt_dbiseqs;
-		txn->mt_u.dirty_list = malloc(sizeof(MDB_ID2)*MDB_IDL_UM_SIZE);
+		txn->mt_u.dirty_list = je_malloc(sizeof(MDB_ID2)*MDB_IDL_UM_SIZE);
 		if (!txn->mt_u.dirty_list ||
 			!(txn->mt_free_pgs = mdb_midl_alloc(MDB_IDL_UM_MAX)))
 		{
-			free(txn->mt_u.dirty_list);
-			free(txn);
+			je_free(txn->mt_u.dirty_list);
+			je_free(txn);
 			return ENOMEM;
 		}
 		txn->mt_txnid = parent->mt_txnid;
@@ -2917,7 +2934,7 @@ renew:
 	}
 	if (rc) {
 		if (txn != env->me_txn0)
-			free(txn);
+			je_free(txn);
 	} else {
 		txn->mt_flags |= flags;	/* could not change txn=me_txn0 earlier */
 		*ret = txn;
@@ -2963,7 +2980,7 @@ mdb_dbis_update(MDB_txn *txn, int keep)
 					env->me_dbxs[i].md_name.mv_size = 0;
 					env->me_dbflags[i] = 0;
 					env->me_dbiseqs[i]++;
-					free(ptr);
+					je_free(ptr);
 				}
 			}
 		}
@@ -3037,14 +3054,14 @@ mdb_txn_end(MDB_txn *txn, unsigned mode)
 			env->me_pgstate = ((MDB_ntxn *)txn)->mnt_pgstate;
 			mdb_midl_free(txn->mt_free_pgs);
 			mdb_midl_free(txn->mt_spill_pgs);
-			free(txn->mt_u.dirty_list);
+			je_free(txn->mt_u.dirty_list);
 		}
 
 		mdb_midl_free(pghead);
 	}
 
 	if (mode & MDB_END_FREE)
-		free(txn);
+		je_free(txn);
 }
 
 void
@@ -3514,7 +3531,7 @@ mdb_txn_commit(MDB_txn *txn)
 				pn >>= 1;
 				y = mdb_mid2l_search(dst, pn);
 				if (y <= dst[0].mid && dst[y].mid == pn) {
-					free(dst[y].mptr);
+					je_free(dst[y].mptr);
 					while (y < dst[0].mid) {
 						dst[y] = dst[y+1];
 						y++;
@@ -3549,11 +3566,11 @@ mdb_txn_commit(MDB_txn *txn)
 			while (yp < dst[x].mid)
 				dst[i--] = dst[x--];
 			if (yp == dst[x].mid)
-				free(dst[x--].mptr);
+				je_free(dst[x--].mptr);
 		}
 		mdb_tassert(txn, i == x);
 		dst[0].mid = len;
-		free(txn->mt_u.dirty_list);
+		je_free(txn->mt_u.dirty_list);
 		parent->mt_dirty_room = txn->mt_dirty_room;
 		if (txn->mt_spill_pgs) {
 			if (parent->mt_spill_pgs) {
@@ -3576,7 +3593,7 @@ mdb_txn_commit(MDB_txn *txn)
 
 		parent->mt_child = NULL;
 		mdb_midl_free(((MDB_ntxn *)txn)->mnt_pgstate.mf_pghead);
-		free(txn);
+		je_free(txn);
 		return rc;
 	}
 
@@ -3754,7 +3771,7 @@ mdb_env_init_meta(MDB_env *env, MDB_meta *meta)
 
 	psize = env->me_psize;
 
-	p = calloc(NUM_METAS, psize);
+	p = je_calloc(NUM_METAS, psize);
 	if (!p)
 		return ENOMEM;
 
@@ -3774,7 +3791,7 @@ mdb_env_init_meta(MDB_env *env, MDB_meta *meta)
 		rc = MDB_SUCCESS;
 	else
 		rc = ENOSPC;
-	free(p);
+	je_free(p);
 	return rc;
 }
 
@@ -3924,7 +3941,7 @@ mdb_env_create(MDB_env **env)
 {
 	MDB_env *e;
 
-	e = calloc(1, sizeof(MDB_env));
+	e = je_calloc(1, sizeof(MDB_env));
 	if (!e)
 		return ENOMEM;
 
@@ -4156,7 +4173,7 @@ mdb_fname_init(const char *path, unsigned envflags, MDB_name *fname)
 	fname->mn_len = strlen(path);
 	if (no_suffix)
 		fname->mn_val = (char *) path;
-	else if ((fname->mn_val = malloc(fname->mn_len + MDB_SUFFLEN+1)) != NULL) {
+	else if ((fname->mn_val = je_malloc(fname->mn_len + MDB_SUFFLEN+1)) != NULL) {
 		fname->mn_alloced = 1;
 		strcpy(fname->mn_val, path);
 	}
@@ -4168,7 +4185,7 @@ mdb_fname_init(const char *path, unsigned envflags, MDB_name *fname)
 
 /** Destroy \b fname from #mdb_fname_init() */
 #define mdb_fname_destroy(fname) \
-	do { if ((fname).mn_alloced) free((fname).mn_val); } while (0)
+	do { if ((fname).mn_alloced) je_free((fname).mn_val); } while (0)
 
 #ifdef O_CLOEXEC /* POSIX.1-2008: Set FD_CLOEXEC atomically at open() */
 # define MDB_CLOEXEC		O_CLOEXEC
@@ -4947,17 +4964,17 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 		flags &= ~MDB_WRITEMAP;
 	} else {
 		if (!((env->me_free_pgs = mdb_midl_alloc(MDB_IDL_UM_MAX)) &&
-			  (env->me_dirty_list = calloc(MDB_IDL_UM_SIZE, sizeof(MDB_ID2)))))
+			  (env->me_dirty_list = je_calloc(MDB_IDL_UM_SIZE, sizeof(MDB_ID2)))))
 			rc = ENOMEM;
 	}
 	env->me_flags = flags |= MDB_ENV_ACTIVE;
 	if (rc)
 		goto leave;
 
-	env->me_path = strdup(path);
-	env->me_dbxs = calloc(env->me_maxdbs, sizeof(MDB_dbx));
-	env->me_dbflags = calloc(env->me_maxdbs, sizeof(uint16_t));
-	env->me_dbiseqs = calloc(env->me_maxdbs, sizeof(unsigned int));
+	env->me_path = je_strdup(path);
+	env->me_dbxs = je_calloc(env->me_maxdbs, sizeof(MDB_dbx));
+	env->me_dbflags = je_calloc(env->me_maxdbs, sizeof(uint16_t));
+	env->me_dbiseqs = je_calloc(env->me_maxdbs, sizeof(unsigned int));
 	if (!(env->me_dbxs && env->me_path && env->me_dbflags && env->me_dbiseqs)) {
 		rc = ENOMEM;
 		goto leave;
@@ -5002,8 +5019,8 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 			MDB_txn *txn;
 			int tsize = sizeof(MDB_txn), size = tsize + env->me_maxdbs *
 				(sizeof(MDB_db)+sizeof(MDB_cursor *)+sizeof(unsigned int)+1);
-			if ((env->me_pbuf = calloc(1, env->me_psize)) &&
-				(txn = calloc(1, size)))
+			if ((env->me_pbuf = je_calloc(1, env->me_psize)) &&
+				(txn = je_calloc(1, size)))
 			{
 				txn->mt_dbs = (MDB_db *)((char *)txn + tsize);
 				txn->mt_cursors = (MDB_cursor **)(txn->mt_dbs + env->me_maxdbs);
@@ -5039,16 +5056,16 @@ mdb_env_close0(MDB_env *env, int excl)
 	/* Doing this here since me_dbxs may not exist during mdb_env_close */
 	if (env->me_dbxs) {
 		for (i = env->me_maxdbs; --i >= CORE_DBS; )
-			free(env->me_dbxs[i].md_name.mv_data);
-		free(env->me_dbxs);
+			je_free(env->me_dbxs[i].md_name.mv_data);
+		je_free(env->me_dbxs);
 	}
 
-	free(env->me_pbuf);
-	free(env->me_dbiseqs);
-	free(env->me_dbflags);
-	free(env->me_path);
-	free(env->me_dirty_list);
-	free(env->me_txn0);
+	je_free(env->me_pbuf);
+	je_free(env->me_dbiseqs);
+	je_free(env->me_dbflags);
+	je_free(env->me_path);
+	je_free(env->me_dirty_list);
+	je_free(env->me_txn0);
 	mdb_midl_free(env->me_free_pgs);
 
 	if (env->me_flags & MDB_ENV_TXKEY) {
@@ -5136,11 +5153,11 @@ mdb_env_close(MDB_env *env)
 	while ((dp = env->me_dpages) != NULL) {
 		VGMEMP_DEFINED(&dp->mp_next, sizeof(dp->mp_next));
 		env->me_dpages = dp->mp_next;
-		free(dp);
+		je_free(dp);
 	}
 
 	mdb_env_close0(env, 0);
-	free(env);
+	je_free(env);
 }
 
 /** Compare two items pointing at aligned size_t's */
@@ -7709,7 +7726,7 @@ mdb_cursor_open(MDB_txn *txn, MDB_dbi dbi, MDB_cursor **ret)
 	if (txn->mt_dbs[dbi].md_flags & MDB_DUPSORT)
 		size += sizeof(MDB_xcursor);
 
-	if ((mc = malloc(size)) != NULL) {
+	if ((mc = je_malloc(size)) != NULL) {
 		mdb_cursor_init(mc, txn, dbi, (MDB_xcursor *)(mc + 1));
 		if (txn->mt_cursors) {
 			mc->mc_next = txn->mt_cursors[dbi];
@@ -7791,7 +7808,7 @@ mdb_cursor_close(MDB_cursor *mc)
 			if (*prev == mc)
 				*prev = mc->mc_next;
 		}
-		free(mc);
+		je_free(mc);
 	}
 }
 
@@ -9272,7 +9289,7 @@ mdb_env_cwalk(mdb_copy *my, pgno_t *pg, int flags)
 		return rc;
 
 	/* Make cursor pages writable */
-	buf = ptr = malloc(my->mc_env->me_psize * mc.mc_snum);
+	buf = ptr = je_malloc(my->mc_env->me_psize * mc.mc_snum);
 	if (buf == NULL)
 		return ENOMEM;
 
@@ -9398,7 +9415,7 @@ again:
 		}
 	}
 done:
-	free(buf);
+	je_free(buf);
 	return rc;
 }
 
@@ -9432,7 +9449,7 @@ mdb_env_copyfd1(MDB_env *env, HANDLE fd)
 	if ((rc = pthread_cond_init(&my.mc_cond, NULL)) != 0)
 		goto done2;
 #ifdef HAVE_MEMALIGN
-	my.mc_wbuf[0] = memalign(env->me_os_psize, MDB_WBUF*2);
+	my.mc_wbuf[0] = je_memalign(env->me_os_psize, MDB_WBUF*2);
 	if (my.mc_wbuf[0] == NULL) {
 		rc = errno;
 		goto done;
@@ -9440,7 +9457,7 @@ mdb_env_copyfd1(MDB_env *env, HANDLE fd)
 #else
 	{
 		void *p;
-		if ((rc = posix_memalign(&p, env->me_os_psize, MDB_WBUF*2)) != 0)
+		if ((rc = je_posix_memalign(&p, env->me_os_psize, MDB_WBUF*2)) != 0)
 			goto done;
 		my.mc_wbuf[0] = p;
 	}
@@ -9525,7 +9542,7 @@ done:
 	if (my.mc_cond)  CloseHandle(my.mc_cond);
 	if (my.mc_mutex) CloseHandle(my.mc_mutex);
 #else
-	free(my.mc_wbuf[0]);
+	je_free(my.mc_wbuf[0]);
 	pthread_cond_destroy(&my.mc_cond);
 done2:
 	pthread_mutex_destroy(&my.mc_mutex);
@@ -9891,7 +9908,7 @@ int mdb_dbi_open(MDB_txn *txn, const char *name, unsigned int flags, MDB_dbi *db
 	}
 
 	/* Done here so we cannot fail after creating a new DB */
-	if ((namedup = strdup(name)) == NULL)
+	if ((namedup = je_strdup(name)) == NULL)
 		return ENOMEM;
 
 	if (rc) {
@@ -9907,7 +9924,7 @@ int mdb_dbi_open(MDB_txn *txn, const char *name, unsigned int flags, MDB_dbi *db
 	}
 
 	if (rc) {
-		free(namedup);
+		je_free(namedup);
 	} else {
 		/* Got info, register DBI in this txn */
 		unsigned int slot = unused ? unused : txn->mt_numdbs;
@@ -9962,7 +9979,7 @@ void mdb_dbi_close(MDB_env *env, MDB_dbi dbi)
 		env->me_dbxs[dbi].md_name.mv_size = 0;
 		env->me_dbflags[dbi] = 0;
 		env->me_dbiseqs[dbi]++;
-		free(ptr);
+		je_free(ptr);
 	}
 }
 
@@ -10266,7 +10283,7 @@ mdb_reader_check0(MDB_env *env, int rlocked, int *dead)
 	int rc = MDB_SUCCESS, count = 0;
 
 	rdrs = env->me_txns->mti_numreaders;
-	pids = malloc((rdrs+1) * sizeof(MDB_PID_T));
+	pids = je_malloc((rdrs+1) * sizeof(MDB_PID_T));
 	if (!pids)
 		return ENOMEM;
 	pids[0] = 0;
@@ -10302,7 +10319,7 @@ mdb_reader_check0(MDB_env *env, int rlocked, int *dead)
 			}
 		}
 	}
-	free(pids);
+	je_free(pids);
 	if (dead)
 		*dead = count;
 	return rc;
@@ -10370,11 +10387,11 @@ utf8_to_utf16(const char *src, MDB_name *dst, int xtra)
 		need = MultiByteToWideChar(CP_UTF8, 0, src, -1, result, need);
 		if (!need) {
 			rc = ErrCode();
-			free(result);
+			je_free(result);
 			return rc;
 		}
 		if (!result) {
-			result = malloc(sizeof(wchar_t) * (need + xtra));
+			result = je_malloc(sizeof(wchar_t) * (need + xtra));
 			if (!result)
 				return ENOMEM;
 			continue;
