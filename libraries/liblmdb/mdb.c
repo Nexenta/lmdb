@@ -4003,8 +4003,8 @@ mdb_env_map(MDB_env *env, void *addr)
 	 * The MAP_FIXED flag would prevent that, but then mmap could
 	 * instead unmap existing pages to make room for the new map.
 	 */
-	if (addr && env->me_map != addr)
-		return EBUSY;	/* TODO: Make a new MDB_* error code? */
+//	if (addr && env->me_map != addr)
+//		return EBUSY;	/* TODO: Make a new MDB_* error code? */
 
 	p = (MDB_page *)env->me_map;
 	env->me_metas[0] = METADATA(p);
