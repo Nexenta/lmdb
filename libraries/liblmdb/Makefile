@@ -41,7 +41,7 @@ IHDRS	= lmdb.h
 ILIBS	= liblmdb.a liblmdb$(SOEXT)
 IPROGS	= mdb_stat mdb_copy mdb_dump mdb_load
 IDOCS	= mdb_stat.1 mdb_copy.1 mdb_dump.1 mdb_load.1
-PROGS	= $(IPROGS) mtest mtest2 mtest3 mtest4 mtest5
+PROGS	= $(IPROGS) mtest mtest2 mtest3 mtest4 mtest5 mtest6 mtest7 mtest8
 all:	$(ILIBS) $(PROGS)
 
 install: $(ILIBS) $(IPROGS) $(IHDRS)
@@ -78,6 +78,8 @@ mtest3:	mtest3.o liblmdb.a
 mtest4:	mtest4.o liblmdb.a
 mtest5:	mtest5.o liblmdb.a
 mtest6:	mtest6.o liblmdb.a
+mtest7:	mtest7.o liblmdb.a
+mtest8:	mtest8.o liblmdb.a
 
 mdb.o: mdb.c lmdb.h midl.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c mdb.c
@@ -101,7 +103,7 @@ COV_FLAGS=-fprofile-arcs -ftest-coverage
 COV_OBJS=xmdb.o xmidl.o
 
 coverage: xmtest
-	for i in mtest*.c [0-9]*.c; do j=`basename \$$i .c`; $(MAKE) $$j.o; \
+	for i in mtest*.c mtest[0-9]*.c; do j=`basename \$$i .c`; $(MAKE) $$j.o; \
 		gcc -o x$$j $$j.o $(COV_OBJS) -pthread $(COV_FLAGS); \
 		rm -rf testdb; mkdir testdb; ./x$$j; done
 	gcov xmdb.c
