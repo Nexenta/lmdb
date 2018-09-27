@@ -4033,6 +4033,7 @@ mdb_env_map(MDB_env *env, void *addr)
 #endif /* POSIX_MADV_RANDOM */
 #endif /* MADV_RANDOM */
 	}
+	madvise(env->me_map, env->me_mapsize, MADV_DONTFORK);
 #endif /* _WIN32 */
 
 	/* Can happen because the address argument to mmap() is just a
