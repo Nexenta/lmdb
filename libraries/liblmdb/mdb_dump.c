@@ -177,12 +177,13 @@ int main(int argc, char *argv[])
 	/* -a: dump main DB and all subDBs
 	 * -s: dump only the named subDB
 	 * -n: use NOSUBDIR flag on env_open
+	 * -d: use RAW flag on env_open
 	 * -p: use printable characters
 	 * -f: write to file instead of stdout
 	 * -V: print version and exit
 	 * (default) dump only the main DB
 	 */
-	while ((i = getopt(argc, argv, "af:lnps:V")) != EOF) {
+	while ((i = getopt(argc, argv, "af:lndps:V")) != EOF) {
 		switch(i) {
 		case 'V':
 			printf("%s\n", MDB_VERSION_STRING);
@@ -205,6 +206,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'n':
 			envflags |= MDB_NOSUBDIR;
+			break;
+		case 'd':
+			envflags |= MDB_RAW;
 			break;
 		case 'p':
 			mode |= PRINT;

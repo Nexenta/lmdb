@@ -3704,12 +3704,16 @@ mdb_env_read_header(MDB_env *env, MDB_meta *meta)
 		p = (MDB_page *)&pbuf;
 
 		if (!F_ISSET(p->mp_flags, P_META)) {
+			if (env->me_flags & MDB_RAW)
+				return ENOENT;
 			DPRINTF(("page %"Z"u not a meta page", p->mp_pgno));
 			return MDB_INVALID;
 		}
 
 		m = METADATA(p);
 		if (m->mm_magic != MDB_MAGIC) {
+			if (env->me_flags & MDB_RAW)
+				return ENOENT;
 			DPUTS("meta has invalid magic");
 			return MDB_INVALID;
 		}
@@ -4008,7 +4012,7 @@ mdb_env_map(MDB_env *env, void *addr)
 	int prot = PROT_READ;
 	if (flags & MDB_WRITEMAP) {
 		prot |= PROT_WRITE;
-		if (ftruncate(env->me_fd, env->me_mapsize) < 0)
+		if (!(flags & MDB_RAW) && ftruncate(env->me_fd, env->me_mapsize) < 0)
 			return ErrCode();
 	}
 	env->me_map = mmap(addr, env->me_mapsize, prot, MAP_SHARED,
@@ -4277,7 +4281,10 @@ mdb_fopen(const MDB_env *env, MDB_name *fname,
 	}
 	fd = CreateFileW(fname->mn_val, acc, share, NULL, disp, attrs, NULL);
 #else
-	fd = open(fname->mn_val, which & MDB_O_MASK, mode);
+	flags = which & MDB_O_MASK;
+	if (which != MDB_O_LOCKS && env->me_flags & MDB_RAW)
+		flags &= ~O_CREAT;
+	fd = open(fname->mn_val, flags, mode);
 #endif
 
 	if (fd == INVALID_HANDLE_VALUE)
@@ -4939,7 +4946,7 @@ fail:
 	 */
 #define	CHANGEABLE	(MDB_NOSYNC|MDB_NOMETASYNC|MDB_MAPASYNC|MDB_NOMEMINIT)
 #define	CHANGELESS	(MDB_FIXEDMAP|MDB_NOSUBDIR|MDB_RDONLY| \
-	MDB_WRITEMAP|MDB_NOTLS|MDB_NOLOCK|MDB_NORDAHEAD)
+	MDB_WRITEMAP|MDB_NOTLS|MDB_NOLOCK|MDB_NORDAHEAD|MDB_RAW)
 
 #if VALID_FLAGS & PERSISTENT_FLAGS & (CHANGEABLE|CHANGELESS)
 # error "Persistent DB flags & env flags overlap, but both go in mm_flags"

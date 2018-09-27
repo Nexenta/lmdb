@@ -43,12 +43,14 @@ int main(int argc,char * argv[])
 		else if (argv[1][1] == 'V' && argv[1][2] == '\0') {
 			printf("%s\n", MDB_VERSION_STRING);
 			exit(0);
-		} else
+		} else if (argv[1][1] == 'r' && argv[1][2] == '\0')
+			flags |= MDB_RAW;
+		else
 			argc = 0;
 	}
 
-	if (argc<2 || argc>3) {
-		fprintf(stderr, "usage: %s [-V] [-c] [-n] srcpath [dstpath]\n", progname);
+	if (argc<2 || argc>4) {
+		fprintf(stderr, "usage: %s [-V] [-c] [-n] [-r] srcpath [dstpath]\n", progname);
 		exit(EXIT_FAILURE);
 	}
 
