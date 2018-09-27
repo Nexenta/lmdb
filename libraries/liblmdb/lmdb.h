@@ -306,6 +306,8 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_NOMEMINIT	0x1000000
 	/** use raw disk partition */
 #define MDB_RAW		0x2000000
+	/** use o_direct flag to open file/partition */
+#define MDB_DIRECT	0x4000000
 /** @} */
 
 /**	@defgroup	mdb_dbi_open	Database Flags

@@ -1812,7 +1812,19 @@ mdb_page_malloc(MDB_txn *txn, unsigned num)
 		sz *= num;
 		off = sz - psize;
 	}
-	if ((ret = je_malloc(sz)) != NULL) {
+	ret = NULL;
+	if ((env->me_flags & MDB_DIRECT)) {
+#ifdef HAVE_MEMALIGN
+		ret = je_memalign(env->me_os_psize, sz);
+#else
+		if (je_posix_memalign((void **)&ret, env->me_os_psize, sz) != 0)
+			ret = NULL;
+#endif
+	} else {
+		/* unaigned is OK here */
+		ret = je_malloc(sz);
+	}
+	if (ret) {
 		VGMEMP_ALLOC(env, ret, sz);
 		if (!(env->me_flags & MDB_NOMEMINIT)) {
 			memset((char *)ret + off, 0, psize);
@@ -3806,8 +3818,10 @@ mdb_env_init_meta(MDB_env *env, MDB_meta *meta)
 static int
 mdb_env_write_meta(MDB_txn *txn)
 {
-	MDB_env *env;
-	MDB_meta	meta, metab, *mp;
+	MDB_env *env = txn->mt_env;
+	MDB_meta *meta, metab, *mp;
+	/* for O_DIRECT case it has to be 4K aligned */
+	unsigned char metap[env->me_os_psize] __attribute__ ((__aligned__ (4096)));
 	unsigned flags;
 	size_t mapsize;
 	off_t off;
@@ -3824,7 +3838,6 @@ mdb_env_write_meta(MDB_txn *txn)
 	DPRINTF(("writing meta page %d for root page %"Z"u",
 		toggle, txn->mt_dbs[MAIN_DBI].md_root));
 
-	env = txn->mt_env;
 	flags = env->me_flags;
 	mp = env->me_metas[toggle];
 	mapsize = env->me_metas[toggle ^ 1]->mm_mapsize;
@@ -3862,16 +3875,18 @@ mdb_env_write_meta(MDB_txn *txn)
 	metab.mm_txnid = mp->mm_txnid;
 	metab.mm_last_pg = mp->mm_last_pg;
 
-	meta.mm_mapsize = mapsize;
-	meta.mm_dbs[FREE_DBI] = txn->mt_dbs[FREE_DBI];
-	meta.mm_dbs[MAIN_DBI] = txn->mt_dbs[MAIN_DBI];
-	meta.mm_last_pg = txn->mt_next_pgno - 1;
-	meta.mm_txnid = txn->mt_txnid;
+	off = toggle ? env->me_psize : 0;
+	memcpy(&metap[0], env->me_map + off, env->me_os_psize);
 
-	off = offsetof(MDB_meta, mm_mapsize);
-	ptr = (char *)&meta + off;
-	len = sizeof(MDB_meta) - off;
-	off += (char *)mp - env->me_map;
+	meta = (MDB_meta *)((char*)&metap[0] + PAGEHDRSZ);
+	meta->mm_mapsize = mapsize;
+	meta->mm_dbs[FREE_DBI] = txn->mt_dbs[FREE_DBI];
+	meta->mm_dbs[MAIN_DBI] = txn->mt_dbs[MAIN_DBI];
+	meta->mm_last_pg = txn->mt_next_pgno - 1;
+	meta->mm_txnid = txn->mt_txnid;
+
+	ptr = (char *)&metap[0];
+	len = env->me_os_psize;
 
 	/* Write to the SYNC fd unless MDB_NOSYNC/MDB_NOMETASYNC.
 	 * (me_mfd goes to the same file as me_fd, but writing to it
@@ -3900,8 +3915,8 @@ retry_write:
 		 * Write some old data back, to prevent it from being used.
 		 * Use the non-SYNC fd; we know it will fail anyway.
 		 */
-		meta.mm_last_pg = metab.mm_last_pg;
-		meta.mm_txnid = metab.mm_txnid;
+		meta->mm_last_pg = metab.mm_last_pg;
+		meta->mm_txnid = metab.mm_txnid;
 #ifdef _WIN32
 		memset(&ov, 0, sizeof(ov));
 		ov.Offset = off;
@@ -4945,7 +4960,7 @@ fail:
 	 *	at runtime. Changing other flags requires closing the
 	 *	environment and re-opening it with the new flags.
 	 */
-#define	CHANGEABLE	(MDB_NOSYNC|MDB_NOMETASYNC|MDB_MAPASYNC|MDB_NOMEMINIT)
+#define	CHANGEABLE	(MDB_NOSYNC|MDB_NOMETASYNC|MDB_MAPASYNC|MDB_NOMEMINIT|MDB_DIRECT)
 #define	CHANGELESS	(MDB_FIXEDMAP|MDB_NOSUBDIR|MDB_RDONLY| \
 	MDB_WRITEMAP|MDB_NOTLS|MDB_NOLOCK|MDB_NORDAHEAD|MDB_RAW)
 
@@ -5042,6 +5057,12 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 			} else {
 				rc = ENOMEM;
 			}
+		}
+	}
+
+	if (!rc && (flags & MDB_DIRECT)) {
+		if ((rc = fcntl(env->me_fd, F_GETFL)) != -1) {
+			rc = fcntl(env->me_fd, F_SETFL, rc | O_DIRECT);
 		}
 	}
 
