@@ -312,6 +312,9 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_COALESCE	0x8000000
 	/** LIFO policy for reclaiming FreeDB records */
 #define MDB_LIFORECLAIM	0x10000000
+	/** Always check new page capacity on split-add */
+#define MDB_PAGECAPCHECK 0x20000000
+
 /** @} */
 
 /**	@defgroup	mdb_dbi_open	Database Flags
