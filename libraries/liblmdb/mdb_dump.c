@@ -155,7 +155,7 @@ static int dumpit(MDB_txn *txn, MDB_dbi dbi, char *name)
 
 static void usage(char *prog)
 {
-	fprintf(stderr, "usage: %s [-V] [-f output] [-l] [-n] [-p] [-a|-s subdb] dbpath\n", prog);
+	fprintf(stderr, "usage: %s [-V] [-f output] [-l] [-v] [-n] [-p] [-a|-s subdb] dbpath\n", prog);
 	exit(EXIT_FAILURE);
 }
 
@@ -180,10 +180,11 @@ int main(int argc, char *argv[])
 	 * -d: use RAW flag on env_open
 	 * -p: use printable characters
 	 * -f: write to file instead of stdout
+	 * -v: use previous snapshot
 	 * -V: print version and exit
 	 * (default) dump only the main DB
 	 */
-	while ((i = getopt(argc, argv, "af:lndps:V")) != EOF) {
+	while ((i = getopt(argc, argv, "af:lndps:Vv")) != EOF) {
 		switch(i) {
 		case 'V':
 			printf("%s\n", MDB_VERSION_STRING);
@@ -206,6 +207,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'n':
 			envflags |= MDB_NOSUBDIR;
+			break;
+		case 'v':
+			envflags |= MDB_PREVSNAPSHOT;
 			break;
 		case 'd':
 			envflags |= MDB_RAW;

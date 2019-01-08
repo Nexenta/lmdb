@@ -314,6 +314,9 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_LIFORECLAIM	0x10000000
 	/** Always check new page capacity on split-add */
 #define MDB_PAGECAPCHECK 0x20000000
+	/** use the previous meta page rather than the latest one */
+#define MDB_PREVSNAPSHOT 0x40000000
+
 
 /** @} */
 
@@ -635,7 +638,14 @@ int  mdb_env_create(MDB_env **env);
 	 *  <li>#MDB_LIFORECLAIM
 	 *		LIFO policy for reclaiming FreeDB records. This significantly reduce
 	 *		write IPOS in case MDB_NOSYNC with periodically checkpoints.
+	 *
+	 *  <li>#MDB_PREVMETA
+	 *		Open the environment with the previous meta page rather than the latest
+	 *		one. This loses the latest transaction, but may help work around some
+	 *		types of corruption.
+	 *
 	 * </ul>
+	 *
 	 * @param[in] mode The UNIX permissions to set on created files and semaphores.
 	 * This parameter is ignored on Windows.
 	 * @return A non-zero error value on failure and 0 on success. Some possible
