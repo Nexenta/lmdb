@@ -261,7 +261,7 @@ typedef struct MDB_val {
 } MDB_val;
 
 /** @brief A callback function used to compare two keys in a database */
-typedef int  (MDB_cmp_func)(const MDB_val *a, const MDB_val *b);
+typedef int  (MDB_cmp_func)(const MDB_val *a, const MDB_val *b, int* err);
 
 /** @brief A callback function used to relocate a position-dependent data item
  * in a fixed-address database.
@@ -466,6 +466,8 @@ typedef enum MDB_cursor_op {
 #define MDB_BAD_VALSIZE		(-30781)
 	/** The specified DBI was changed unexpectedly */
 #define MDB_BAD_DBI		(-30780)
+	/** Key or value comparator returned a error. MDB corruption is supposed */
+#define MDB_CMPERROR		(-30779)
 	/** The last defined error code */
 #define MDB_LAST_ERRCODE	MDB_BAD_DBI
 /** @} */
@@ -1772,7 +1774,7 @@ int  mdb_cursor_count(MDB_cursor *cursor, size_t *countp);
 	 * @param[in] b The second item to compare
 	 * @return < 0 if a < b, 0 if a == b, > 0 if a > b
 	 */
-int  mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b);
+int  mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b, int* err);
 
 	/** @brief Compare two data items according to a particular database.
 	 *
@@ -1784,7 +1786,7 @@ int  mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b);
 	 * @param[in] b The second item to compare
 	 * @return < 0 if a < b, 0 if a == b, > 0 if a > b
 	 */
-int  mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b);
+int  mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b, int* err);
 
 	/** @brief A callback function used to print a message from the library.
 	 *
