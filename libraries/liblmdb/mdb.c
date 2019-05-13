@@ -1432,7 +1432,7 @@ static int  mdb_env_write_meta(MDB_txn *txn);
 #endif
 static void mdb_env_close0(MDB_env *env, int excl);
 
-static MDB_node *mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp);
+static MDB_node *mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp, int* cmp_err);
 static int  mdb_node_add(MDB_cursor *mc, indx_t indx,
 			    MDB_val *key, MDB_val *data, pgno_t pgno,
 			    uint64_t attr, unsigned int flags);
@@ -1521,6 +1521,7 @@ static char *const mdb_errstr[] = {
 	"MDB_BAD_TXN: Transaction must abort, has a child, or is invalid",
 	"MDB_BAD_VALSIZE: Unsupported size of key/DB name/data, or wrong DUPFIXED size",
 	"MDB_BAD_DBI: The specified DBI handle was closed/changed unexpectedly",
+	"MDB_CMPERROR: A key or value comparator function returned a error. A DBI must be corrupted",
 };
 
 char *
@@ -1798,20 +1799,20 @@ static void mdb_audit(MDB_txn *txn)
 #endif
 
 int
-mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b)
+mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b, int* err)
 {
-	return txn->mt_dbxs[dbi].md_cmp(a, b);
+	return txn->mt_dbxs[dbi].md_cmp(a, b, err);
 }
 
 int
-mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b)
+mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b, int* err)
 {
 	MDB_cmp_func *dcmp = txn->mt_dbxs[dbi].md_dcmp;
 #if UINT_MAX < SIZE_MAX
 	if (dcmp == mdb_cmp_int && a->mv_size == sizeof(size_t))
 		dcmp = mdb_cmp_clong;
 #endif
-	return dcmp(a, b);
+	return dcmp(a, b, err);
 }
 
 /** Allocate memory for a page.
@@ -5664,8 +5665,9 @@ mdb_env_close(MDB_env *env)
 
 /** Compare two items pointing at aligned size_t's */
 static int
-mdb_cmp_long(const MDB_val *a, const MDB_val *b)
+mdb_cmp_long(const MDB_val *a, const MDB_val *b, int* err)
 {
+	*err = 0;
 	return (*(size_t *)a->mv_data < *(size_t *)b->mv_data) ? -1 :
 		*(size_t *)a->mv_data > *(size_t *)b->mv_data;
 }
@@ -5676,8 +5678,9 @@ mdb_cmp_long(const MDB_val *a, const MDB_val *b)
  *	but #mdb_cmp_clong() is called instead if the data type is size_t.
  */
 static int
-mdb_cmp_int(const MDB_val *a, const MDB_val *b)
+mdb_cmp_int(const MDB_val *a, const MDB_val *b, int* err)
 {
+	*err = 0;
 	return (*(unsigned int *)a->mv_data < *(unsigned int *)b->mv_data) ? -1 :
 		*(unsigned int *)a->mv_data > *(unsigned int *)b->mv_data;
 }
@@ -5686,8 +5689,9 @@ mdb_cmp_int(const MDB_val *a, const MDB_val *b)
  *	Nodes and keys are guaranteed to be 2-byte aligned.
  */
 static int
-mdb_cmp_cint(const MDB_val *a, const MDB_val *b)
+mdb_cmp_cint(const MDB_val *a, const MDB_val *b, int* err)
 {
+	*err = 0;
 #if BYTE_ORDER == LITTLE_ENDIAN
 	unsigned short *u, *c;
 	int x;
@@ -5714,11 +5718,12 @@ mdb_cmp_cint(const MDB_val *a, const MDB_val *b)
 
 /** Compare two items lexically */
 static int
-mdb_cmp_memn(const MDB_val *a, const MDB_val *b)
+mdb_cmp_memn(const MDB_val *a, const MDB_val *b, int* err)
 {
 	int diff;
 	ssize_t len_diff;
 	unsigned int len;
+	*err = 0;
 
 	len = a->mv_size;
 	len_diff = (ssize_t) a->mv_size - (ssize_t) b->mv_size;
@@ -5733,11 +5738,13 @@ mdb_cmp_memn(const MDB_val *a, const MDB_val *b)
 
 /** Compare two items in reverse byte order */
 static int
-mdb_cmp_memnr(const MDB_val *a, const MDB_val *b)
+mdb_cmp_memnr(const MDB_val *a, const MDB_val *b, int* err)
 {
 	const unsigned char	*p1, *p2, *p1_lim;
 	ssize_t len_diff;
 	int diff;
+
+	*err = 0;
 
 	p1_lim = (const unsigned char *)a->mv_data;
 	p1 = (const unsigned char *)a->mv_data + a->mv_size;
@@ -5765,7 +5772,7 @@ mdb_cmp_memnr(const MDB_val *a, const MDB_val *b)
  * If no entry larger or equal to the key is found, returns NULL.
  */
 static MDB_node *
-mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp)
+mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp, int* cmp_rc)
 {
 	unsigned int	 i = 0, nkeys;
 	int		 low, high;
@@ -5802,9 +5809,15 @@ mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp)
 		while (low <= high) {
 			i = (low + high) >> 1;
 			nodekey.mv_data = LEAF2KEY(mp, i, nodekey.mv_size);
-			rc = cmp(key, &nodekey);
-			DPRINTF(("found leaf index %u [%s], rc = %i",
-			    i, DKEY(&nodekey), rc));
+			rc = cmp(key, &nodekey, cmp_rc);
+			DPRINTF(("found leaf index %u [%s], rc = %i, err = %i",
+			    i, DKEY(&nodekey), rc, err));
+			/**
+			 * Terminate on comparator error
+			 */
+			if (*cmp_rc != 0)
+				return NULL;
+
 			if (rc == 0)
 				break;
 			if (rc > 0)
@@ -5820,7 +5833,10 @@ mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp)
 			nodekey.mv_size = NODEKSZ(node);
 			nodekey.mv_data = NODEKEY(node);
 
-			rc = cmp(key, &nodekey);
+			rc = cmp(key, &nodekey, cmp_rc);
+			if (*cmp_rc != 0)
+				return NULL;
+
 #if MDB_DEBUG
 			if (IS_LEAF(mp))
 				DPRINTF(("found leaf index %u [%s], rc = %i",
@@ -6005,11 +6021,13 @@ mdb_page_search_root(MDB_cursor *mc, MDB_val *key, int flags)
 				}
 			}
 		} else {
-			int	 exact;
-			node = mdb_node_search(mc, key, &exact);
-			if (node == NULL)
+			int	 exact, cmp_err = 0;
+			node = mdb_node_search(mc, key, &exact, &cmp_err);
+			if (node == NULL) {
+				if (cmp_err)
+					return MDB_CMPERROR;
 				i = NUMKEYS(mp) - 1;
-			else {
+			} else {
 				i = mc->mc_ki[mc->mc_top];
 				if (!exact) {
 					mdb_cassert(mc, i > 0);
@@ -6109,10 +6127,12 @@ mdb_page_search(MDB_cursor *mc, MDB_val *key, int flags)
 					return rc;
 				{
 					MDB_val data;
-					int exact = 0;
+					int exact = 0, cmp_err = 0;
 					uint16_t flags;
 					MDB_node *leaf = mdb_node_search(&mc2,
-						&mc->mc_dbx->md_name, &exact);
+						&mc->mc_dbx->md_name, &exact, &cmp_err);
+					if (cmp_err)
+						return MDB_CMPERROR;
 					if (!exact)
 						return MDB_NOTFOUND;
 					if ((leaf->mn_flags & (F_DUPDATA|F_SUBDATA)) != F_SUBDATA)
@@ -6556,7 +6576,7 @@ static int
 mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data,
     MDB_cursor_op op, int *exactp, uint64_t *attrp)
 {
-	int		 rc;
+	int		 rc, err = 0;
 	MDB_page	*mp;
 	MDB_node	*leaf = NULL;
 	DKBUF;
@@ -6583,7 +6603,9 @@ mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data,
 			leaf = NODEPTR(mp, 0);
 			MDB_GET_KEY2(leaf, nodekey);
 		}
-		rc = mc->mc_dbx->md_cmp(key, &nodekey);
+		rc = mc->mc_dbx->md_cmp(key, &nodekey, &err);
+		if (err)
+			return MDB_CMPERROR;
 		if (rc == 0) {
 			/* Probably happens rarely, but first node on the page
 			 * was the one we wanted.
@@ -6604,7 +6626,10 @@ mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data,
 					leaf = NODEPTR(mp, nkeys-1);
 					MDB_GET_KEY2(leaf, nodekey);
 				}
-				rc = mc->mc_dbx->md_cmp(key, &nodekey);
+				err = 0;
+				rc = mc->mc_dbx->md_cmp(key, &nodekey, &err);
+				if (err)
+					return MDB_CMPERROR;
 				if (rc == 0) {
 					/* last node was the one we wanted */
 					mc->mc_ki[mc->mc_top] = nkeys-1;
@@ -6622,7 +6647,10 @@ mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data,
 							leaf = NODEPTR(mp, mc->mc_ki[mc->mc_top]);
 							MDB_GET_KEY2(leaf, nodekey);
 						}
-						rc = mc->mc_dbx->md_cmp(key, &nodekey);
+						err = 0;
+						rc = mc->mc_dbx->md_cmp(key, &nodekey, &err);
+						if (err)
+							return MDB_CMPERROR;
 						if (rc == 0) {
 							/* current node was the one we wanted */
 							if (exactp)
@@ -6669,7 +6697,11 @@ mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data,
 	mdb_cassert(mc, IS_LEAF(mp));
 
 set2:
-	leaf = mdb_node_search(mc, key, exactp);
+	rc = 0;
+	leaf = mdb_node_search(mc, key, exactp, &rc);
+	if (rc)
+		return MDB_CMPERROR;
+
 	if (exactp != NULL && !*exactp) {
 		/* MDB_SET specified and not an exact match. */
 		return MDB_NOTFOUND;
@@ -6720,6 +6752,7 @@ set1:
 		} else if (op == MDB_GET_BOTH || op == MDB_GET_BOTH_RANGE) {
 			MDB_val olddata;
 			MDB_cmp_func *dcmp;
+			int cmp_err = 0;
 			if ((rc = mdb_node_read(mc, leaf, &olddata)) != MDB_SUCCESS)
 				return rc;
 			dcmp = mc->mc_dbx->md_dcmp;
@@ -6727,7 +6760,9 @@ set1:
 			if (dcmp == mdb_cmp_int && olddata.mv_size == sizeof(size_t))
 				dcmp = mdb_cmp_clong;
 #endif
-			rc = dcmp(data, &olddata);
+			rc = dcmp(data, &olddata, &cmp_err);
+			if (cmp_err)
+				return MDB_CMPERROR;
 			if (rc) {
 				if (op == MDB_GET_BOTH || rc > 0)
 					return MDB_NOTFOUND;
@@ -7122,13 +7157,15 @@ mdb_cursor_put_attr(MDB_cursor *mc, MDB_val *key, MDB_val *data, uint64_t attr,
 		mc->mc_flags &= ~C_INITIALIZED;
 		rc = MDB_NO_ROOT;
 	} else {
-		int exact = 0;
+		int exact = 0, cmp_err = 0;
 		MDB_val d2;
 		if (flags & MDB_APPEND) {
 			MDB_val k2;
 			rc = mdb_cursor_last(mc, &k2, &d2);
 			if (rc == 0) {
-				rc = mc->mc_dbx->md_cmp(key, &k2);
+				rc = mc->mc_dbx->md_cmp(key, &k2, &cmp_err);
+				if (cmp_err)
+					return MDB_CMPERROR;
 				if (rc > 0) {
 					rc = MDB_NOTFOUND;
 					mc->mc_ki[mc->mc_top]++;
@@ -7257,6 +7294,7 @@ more:
 			 * size.  xdata: node data with new page or DB.
 			 */
 			unsigned	i, offset = 0;
+			int cmp_err = 0, rc;
 			mp = fp = xdata.mv_data = env->me_pbuf;
 			mp->mp_pgno = mc->mc_pg[mc->mc_top]->mp_pgno;
 
@@ -7272,7 +7310,10 @@ more:
 					dcmp = mdb_cmp_clong;
 #endif
 				/* does data match? */
-				if (!dcmp(data, &olddata)) {
+				rc = dcmp(data, &olddata, &cmp_err);
+				if (cmp_err)
+					return MDB_CMPERROR;
+				if (!rc) {
 					if (flags & (MDB_NODUPDATA|MDB_APPENDDUP))
 						return MDB_KEYEXIST;
 					/* overwrite it */
