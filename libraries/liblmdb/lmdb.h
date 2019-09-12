@@ -316,6 +316,8 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_PAGECAPCHECK 0x20000000
 	/** use the previous meta page rather than the latest one */
 #define MDB_PREVSNAPSHOT 0x40000000
+	/** Sync pages/metapages on mdb_txn_commiy overriding env options  */
+#define MDB_TXN_SYNC 0x80000000
 
 
 /** @} */
