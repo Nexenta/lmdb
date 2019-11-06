@@ -1180,7 +1180,7 @@ struct MDB_txn {
  *	@{
  */
 	/** #mdb_txn_begin() flags */
-#define MDB_TXN_BEGIN_FLAGS	MDB_RDONLY
+#define MDB_TXN_BEGIN_FLAGS	(MDB_RDONLY | MDB_TXN_SYNC)
 #define MDB_TXN_RDONLY		MDB_RDONLY	/**< read-only transaction */
 	/* internal txn flags */
 #define MDB_TXN_WRITEMAP	MDB_WRITEMAP	/**< copy of #MDB_env flag in writers */
@@ -1426,7 +1426,7 @@ static int	mdb_page_split(MDB_cursor *mc, MDB_val *newkey, MDB_val *newdata,
 
 static int  mdb_env_read_header(MDB_env *env, int prev, MDB_meta *meta);
 static MDB_meta *mdb_env_pick_meta(const MDB_env *env);
-static int  mdb_env_write_meta(MDB_txn *txn);
+static int  mdb_env_write_meta(MDB_txn *txn, int sync);
 #ifdef MDB_USE_POSIX_MUTEX /* Drop unused excl arg */
 # define mdb_env_close0(env, excl) mdb_env_close1(env)
 #endif
@@ -3869,7 +3869,7 @@ static int ESECT mdb_env_share_locks(MDB_env *env, int *excl);
 int
 mdb_txn_commit(MDB_txn *txn)
 {
-	int		rc;
+	int		rc, sync;
 	unsigned int i, end_mode;
 	MDB_env	*env;
 
@@ -4102,9 +4102,10 @@ mdb_txn_commit(MDB_txn *txn)
 	mdb_audit(txn);
 #endif
 
+	sync = !!(txn->mt_flags & MDB_TXN_SYNC);
 	if ((rc = mdb_page_flush(txn, 0)) ||
-		(rc = mdb_env_sync(env, 0)) ||
-		(rc = mdb_env_write_meta(txn)))
+		(rc = mdb_env_sync(env, sync)) ||
+		(rc = mdb_env_write_meta(txn, sync)))
 		goto fail;
 	end_mode = MDB_END_COMMITTED|MDB_END_UPDATE;
 	if (env->me_flags & MDB_PREVSNAPSHOT) {
@@ -4268,7 +4269,7 @@ mdb_env_init_meta(MDB_env *env, MDB_meta *meta)
  * @return 0 on success, non-zero on failure.
  */
 static int
-mdb_env_write_meta(MDB_txn *txn)
+mdb_env_write_meta(MDB_txn *txn, int sync)
 {
 	MDB_env *env = txn->mt_env;
 	MDB_meta *meta, metab, *mp;
@@ -4308,7 +4309,7 @@ mdb_env_write_meta(MDB_txn *txn)
 		__sync_synchronize();
 #endif
 		mp->mm_txnid = txn->mt_txnid;
-		if (!(flags & (MDB_NOMETASYNC|MDB_NOSYNC))) {
+		if (!(flags & (MDB_NOMETASYNC|MDB_NOSYNC)) || sync) {
 			unsigned meta_size = env->me_psize;
 			rc = (env->me_flags & MDB_MAPASYNC) ? MS_ASYNC : MS_SYNC;
 			ptr = (char *)mp - PAGEHDRSZ;
@@ -4344,7 +4345,7 @@ mdb_env_write_meta(MDB_txn *txn)
 	 * (me_mfd goes to the same file as me_fd, but writing to it
 	 * also syncs to disk.  Avoids a separate fdatasync() call.)
 	 */
-	mfd = (flags & (MDB_NOSYNC|MDB_NOMETASYNC)) ? env->me_fd : env->me_mfd;
+	mfd = ((flags & (MDB_NOSYNC|MDB_NOMETASYNC)) && !sync) ? env->me_fd : env->me_mfd;
 #ifdef _WIN32
 	{
 		memset(&ov, 0, sizeof(ov));
